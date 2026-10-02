@@ -155,4 +155,36 @@ std::vector<Snapshot> Database::list() const {
     while (rows.next()) result.push_back(read_snapshot(rows));
     return result;
 }
+
+bool Database::has_coverage_issues(std::int64_t id) const {
+    Statement row(db_, "SELECT EXISTS(SELECT 1 FROM entries WHERE scan_id=? AND status NOT IN ('observed','excluded'))");
+    row.number(1, id);
+    row.next();
+    return row.number(0) != 0;
+}
+
+void Database::erase(const std::vector<std::int64_t>& ids) {
+    if (!writable_) throw std::runtime_error("Database opened read-only");
+    if (ids.empty()) return;
+    execute(db_, "BEGIN IMMEDIATE");
+    try {
+        Statement entries(db_, "DELETE FROM entries WHERE scan_id=?");
+        Statement scans(db_, "DELETE FROM scans WHERE id=?");
+        for (const auto id : ids) {
+            if (id < 1) throw std::runtime_error("Invalid snapshot ID");
+            entries.number(1, id); entries.next(); entries.reset();
+            scans.number(1, id); scans.next(); scans.reset();
+            if (sqlite3_changes(db_) != 1) throw std::runtime_error("Snapshot " + std::to_string(id) + " does not exist");
+        }
+        execute(db_, "COMMIT");
+    } catch (...) {
+        sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr);
+        throw;
+    }
+}
+
+void Database::compact() {
+    if (!writable_) throw std::runtime_error("Database opened read-only");
+    execute(db_, "VACUUM");
+}
 }

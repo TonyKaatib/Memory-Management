@@ -1,4 +1,5 @@
 #include "spaceledger/database.hpp"
+#include "spaceledger/history.hpp"
 #include "spaceledger/windows.hpp"
 
 #include <winioctl.h>
@@ -73,6 +74,34 @@ void diff_tests() {
     std::cout << "PASS diff accounting and incomplete coverage\n";
 }
 
+void history_tests() {
+    require(parse_duration_hours(L"24h") == 24 && parse_duration_hours(L"7d") == 168 &&
+            parse_duration_hours(L"2w") == 336, "Duration parsing failed");
+    for (const auto& bad : {L"0h", L"-1h", L"2m", L"999999999999999999999w"}) {
+        bool rejected = false;
+        try { (void)parse_duration_hours(bad); } catch (const std::exception&) { rejected = true; }
+        require(rejected, "Invalid duration accepted");
+    }
+    require(utc_hours_ago(1) < utc_now(), "UTC cutoff calculation failed");
+    std::vector<Snapshot> headers;
+    for (int i = 1; i <= 5; ++i) {
+        auto s = sample();
+        s.id = i;
+        s.finished = "2026-10-0" + std::to_string(i) + "T12:00:00Z";
+        headers.push_back(s);
+    }
+    require(latest_snapshot(headers, {}).id == 5, "Latest snapshot wrong");
+    const auto pair = since_pair(headers, {}, "2026-10-03T00:00:00Z");
+    require(pair.from == 2 && pair.to == 5, "Time interval chose wrong baseline");
+    auto prune = retention_candidates(headers, {}, 2, [](std::int64_t id) { return id != 1; });
+    require(prune == std::vector<std::int64_t>({2, 3}), "Retention did not preserve last complete baseline");
+    headers.back().volume = "new-volume";
+    bool ambiguous = false;
+    try { (void)latest_snapshot(headers, {}); } catch (const std::exception&) { ambiguous = true; }
+    require(ambiguous, "Multiple volumes not flagged as ambiguous");
+    std::cout << "PASS history selection and retention planning\n";
+}
+
 void write_file(const fs::path& path, std::size_t bytes) {
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     const std::string data(bytes, 'x');
@@ -123,6 +152,22 @@ void integration_tests() {
     write_file(root / L"a shared.bin", 8192);
     require(CreateHardLinkW((root / L"z shared.bin").c_str(), (root / L"a shared.bin").c_str(), nullptr) != 0, "Cannot create NTFS hard link");
     write_file(root / L"ol\u00e1 \u4e16\u754c.txt", 2048);
+    fs::path long_directory = root;
+    std::wstring long_relative;
+    for (int i = 0; i < 4; ++i) {
+        const auto part = std::wstring(70, static_cast<wchar_t>(L'a' + i));
+        long_directory /= part;
+        long_relative += (long_relative.empty() ? L"" : L"/") + part;
+        require(CreateDirectoryW(extended(long_directory).c_str(), nullptr) != 0, "Cannot create long-path fixture directory");
+    }
+    const auto long_file = long_directory / L"deep.bin";
+    {
+        Handle file(CreateFileW(extended(long_file).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr));
+        require(static_cast<bool>(file), "Cannot create long-path fixture file");
+        const char byte = 'x';
+        DWORD written = 0;
+        require(WriteFile(file.get(), &byte, 1, &written, nullptr) != 0 && written == 1, "Cannot write long-path fixture");
+    }
 
     {
         Handle file(CreateFileW((root / L"sparse.bin").c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr));
@@ -147,6 +192,7 @@ void integration_tests() {
     const auto& compressed = find_entry(first, "compressed.bin");
     require(compressed.allocated < compressed.logical, "Compressed allocation is incorrect");
     require(find_entry(first, "ol\xc3\xa1 \xe4\xb8\x96\xe7\x95\x8c.txt").logical == 2048, "Unicode filename lost");
+    require(find_entry(first, utf8(long_relative + L"/deep.bin")).logical == 1, "Long path lost");
 
     fs::rename(root / L"old" / L"move.bin", root / L"new" / L"renamed.bin");
     write_file(root / L"grow.bin", 32768);
@@ -157,6 +203,15 @@ void integration_tests() {
     require(diff.changes.size() == 4 && diff.uncertain == 0, "Unexpected real NTFS comparison results");
     require(diff.logical_delta == 24576 && diff.allocated_delta == 24576, "Real byte delta mismatch");
     require(totals(second).allocated - totals(first).allocated == diff.allocated_delta, "File allocation totals do not reconcile");
+    ScanProgress final_progress;
+    int progress_calls = 0;
+    (void)scan(root, {}, [&](const ScanProgress& p) { final_progress = p; ++progress_calls; });
+    require(progress_calls >= 2 && final_progress.entries == second.entries.size(), "Scan progress was not completed");
+    int cancellation_checks = 0;
+    bool cancelled = false;
+    try { (void)scan(root, {}, {}, [&] { return ++cancellation_checks >= 4; }); }
+    catch (const ScanCancelled&) { cancelled = true; }
+    require(cancelled, "Scan cancellation was ignored");
 
     const auto db_path = base / L"history.db";
     {
@@ -179,6 +234,20 @@ void integration_tests() {
         bool rejected = false;
         try { db.save(first); } catch (const std::exception&) { rejected = true; }
         require(rejected, "Read-only database accepted a write");
+    }
+    {
+        Database db(db_path, true);
+        require(!db.has_coverage_issues(1), "Clean scan marked incomplete");
+        auto with_issue = first;
+        with_issue.entries.front().status = "error";
+        const auto problem_id = db.save(with_issue);
+        require(db.has_coverage_issues(problem_id), "Coverage issue not detected");
+        db.erase({problem_id});
+        require(db.list().size() == 2, "Retention did not remove snapshot and entries");
+        bool missing = false;
+        try { (void)db.load(problem_id); } catch (const std::exception&) { missing = true; }
+        require(missing, "Deleted snapshot still loads");
+        db.compact();
     }
     {
         Handle locked(CreateFileW((root / L"grow.bin").c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
@@ -213,6 +282,7 @@ int main() {
     SetConsoleOutputCP(CP_UTF8);
     try {
         diff_tests();
+        history_tests();
         integration_tests();
         return 0;
     } catch (const std::exception& error) {

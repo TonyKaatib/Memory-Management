@@ -14,6 +14,9 @@ public:
     std::int64_t save(const Snapshot& snapshot);
     Snapshot load(std::int64_t id) const;
     std::vector<Snapshot> list() const;
+    bool has_coverage_issues(std::int64_t id) const;
+    void erase(const std::vector<std::int64_t>& ids);
+    void compact();
 private:
     sqlite3* db_ = nullptr;
     bool writable_ = false;

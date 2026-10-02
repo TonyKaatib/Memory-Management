@@ -2,7 +2,7 @@
 
 A Windows command-line prototype for answering **which files and folders changed their storage use between two scans**.
 
-Version 0.1 implements the first working slice: scan a selected NTFS directory, save a snapshot in SQLite, scan again, and compare file and folder sizes. It measures metadata and writes its own history database. It has no cleanup commands.
+Version 0.2 adds scan progress and cancellation, time-based comparisons, daily scheduling support, and controlled history retention to the NTFS snapshot prototype. It measures metadata, never reads file contents, and has no file-cleanup commands.
 
 ## Build
 
@@ -46,10 +46,33 @@ By default, snapshots go into `.spaceledger\history.db` in the current directory
 ```powershell
 .\build\Release\spaceledger.exe issues --scan 2
 .\build\Release\spaceledger.exe diff --from 1 --to 2 --limit 100
+.\build\Release\spaceledger.exe latest --path 'C:\path\to\your\folder'
+.\build\Release\spaceledger.exe diff --since 24h --path 'C:\path\to\your\folder'
 .\build\Release\spaceledger.exe --help
 ```
 
-`scan` exits with 0 on success, 2 when it saves a snapshot containing coverage issues, and 1 on failure. `issues` explains skipped entries and Windows access errors. `scans`, `diff`, and `issues` open the database read-only and do not create a missing database.
+`--since` accepts hours, days or weeks (for example `24h`, `7d`, `2w`). It compares the latest scan with the most recent scan completed before the requested cutoff; it reports an error until such a baseline exists. Use `--path` when history contains multiple roots. `scan` shows progress in an interactive console; `--quiet` suppresses it. Ctrl+C cancels before saving and returns 130. Other exit codes are 0 on success, 2 when a scan is saved with coverage issues, and 1 on failure. `issues` explains skipped entries and Windows access errors. Read commands do not create a missing database.
+
+## Daily history and retention
+
+Preview a daily task for a specific local directory, then register it only after checking the displayed root, database, time and command:
+
+```powershell
+.\tools\schedule.ps1 -Mode Plan -Root 'C:\path\to\your\folder' -At 03:00 -Keep 30
+.\tools\schedule.ps1 -Mode Add  -Root 'C:\path\to\your\folder' -At 03:00 -Keep 30
+```
+
+The task runs each day while you are signed in. `-RunWhenLoggedOff` requests Windows' S4U logon instead; access to some encrypted or network resources may differ. Use `-Mode Show` to inspect it and `-Mode Remove` to unregister it, passing the same `-Root` and, if specified originally, `-Database`. Removing a task leaves the history intact. The task uses this project's built executable and scripts, so keep this directory in place. No daily task is registered by building SpaceLedger.
+
+Each scheduled run scans the selected root, then prunes its history if the scan was saved (including scans with reported coverage issues). It retains the newest 30 by default, plus the latest baseline without recorded coverage issues. It does not affect other roots in the database. To do this manually, preview first:
+
+```powershell
+.\build\Release\spaceledger.exe retention --path 'C:\path\to\your\folder' --keep 30
+.\build\Release\spaceledger.exe retention --path 'C:\path\to\your\folder' --keep 30 --apply
+.\build\Release\spaceledger.exe compact
+```
+
+`--apply` permanently deletes the listed snapshots; `compact` is a separate, explicit operation to reclaim unused database pages and may require temporary disk space. Retention never deletes files in the monitored directory.
 
 ## Reading the comparison
 
@@ -66,17 +89,17 @@ All sizes are exact **bytes**, all timestamps are **UTC**, and positive file/fol
 
 ## Current boundaries
 
-This is a manual snapshot prototype. It does not yet implement a GUI, scheduling, retention, USN journal monitoring, process attribution, application classification, or cleanup guidance.
+This remains a snapshot prototype. It does not yet implement a GUI, continuous USN journal monitoring, process attribution, application classification, or cleanup guidance. Scheduling uses Windows Task Scheduler rather than a permanently running service.
 
 It supports local NTFS drive-letter paths. It skips reparse points, junctions and entries marked as cloud/offline/recall files, reporting those coverage gaps. It requests metadata access only and never reads file contents. Cloud-provider behavior has not yet been validated on a live OneDrive account. Do not use it as a security boundary against concurrent malicious path substitutions.
 
 Alternate data streams, directory/MFT overhead, VSS storage, deduplication and other special storage arrangements are not included in file totals. Tiny resident files can report zero separate data allocation. Empty-directory-only changes are stored but are not shown as file changes. Creation-time changes and file-ID reuse can affect identity matching.
 
-The scanner keeps a snapshot in memory and opens files individually. It is intended for selected directories first; whole-drive performance has not been benchmarked. Every scan stores a full snapshot, with no automatic pruning. Paths and names in the database are sensitive metadata; store it in a private local directory. The database inherits its directory's Windows permissions and is not encrypted.
+The scanner keeps a snapshot in memory and opens files individually. It is intended for selected directories first; whole-drive performance has not been benchmarked. Every scan stores a full snapshot. Automatic pruning happens only for a task explicitly registered with the scheduling helper. Paths and names in the database are sensitive metadata; store it in a private local directory. The database inherits its directory's Windows permissions and is not encrypted.
 
 ## Verification
 
-CTest runs synthetic accounting cases and real NTFS fixtures under `build\spaceledger-test-*`. Tests cover growth, shrinkage, additions/removals, moves, hard links, sparse and compressed files, Unicode, content locks, denied directory listing, exclusions, persistence, read-only database access and transaction rollback. A symbolic-link loop is tested where the OS permits creating it; otherwise that case explicitly reports `SKIP`. A separate CLI workflow checks the scan/list/diff/issues commands, invalid inputs, incompatible roots, missing databases and preservation of an unrelated file passed as a database. Fixtures are retained for inspection. All fixture content and ACL changes are confined to newly created test directories.
+CTest runs synthetic accounting cases and real NTFS fixtures under `build\spaceledger-test-*`. Tests cover growth, shrinkage, additions/removals, moves, hard links, sparse and compressed files, Unicode and long paths, content locks, denied directory listing, exclusions, persistence, read-only database access, transaction rollback and cancellation. A symbolic-link loop is tested where the OS permits creating it; otherwise that case explicitly reports `SKIP`. A separate CLI workflow checks the commands and invalid inputs, including time selection and retention. Fixtures are retained for inspection. All fixture content and ACL changes are confined to newly created test directories.
 
 Source layout:
 
@@ -86,8 +109,11 @@ src/windows.cpp       Windows handles, Unicode and path helpers
 src/scanner.cpp       NTFS metadata collection
 src/database.cpp      SQLite schema and transactions
 src/diff.cpp          Identity matching and folder accounting
+src/history.cpp       Time selection and retention policy
 src/main.cpp          CLI and reports
 tests/tests.cpp       Accounting and filesystem integration tests
 tools/build.ps1       Build and test entry point
+tools/schedule.ps1    Task Scheduler preview and management
+tools/run-scheduled.ps1  Single scheduled scan and retention
 docs/DEVELOPMENT.md    Decisions, tested status and next milestones
 ```

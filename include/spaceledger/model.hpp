@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -66,7 +68,21 @@ struct Diff {
     std::size_t uncertain = 0;
 };
 
-Snapshot scan(const fs::path& root, const std::vector<fs::path>& exclusions = {});
+struct ScanProgress {
+    std::size_t entries = 0;
+    std::size_t directories = 0;
+    std::size_t issues = 0;
+    std::string current_path;
+};
+
+class ScanCancelled : public std::runtime_error {
+public:
+    ScanCancelled() : std::runtime_error("Scan cancelled; no snapshot saved") {}
+};
+
+Snapshot scan(const fs::path& root, const std::vector<fs::path>& exclusions = {},
+              const std::function<void(const ScanProgress&)>& on_progress = {},
+              const std::function<bool()>& cancelled = {});
 Totals totals(const Snapshot& snapshot);
 Diff compare(const Snapshot& before, const Snapshot& after);
 bool path_within(const std::string& path, const std::string& parent);

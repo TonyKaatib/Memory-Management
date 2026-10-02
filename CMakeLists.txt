@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(SpaceLedger VERSION 0.1.0 LANGUAGES CXX)
+project(SpaceLedger VERSION 0.2.0 LANGUAGES CXX)
 
 if(NOT WIN32 OR NOT MSVC)
   message(FATAL_ERROR "SpaceLedger currently requires Windows and the MSVC toolchain.")
@@ -13,6 +13,7 @@ add_library(spaceledger_core
   src/windows.cpp
   src/scanner.cpp
   src/database.cpp
+  src/history.cpp
   src/diff.cpp)
 target_include_directories(spaceledger_core PUBLIC include)
 target_compile_definitions(spaceledger_core PUBLIC UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
@@ -33,4 +34,8 @@ if(BUILD_TESTING)
   add_test(NAME spaceledger_cli_help COMMAND spaceledger --help)
   add_test(NAME spaceledger_cli_workflow COMMAND ${CMAKE_COMMAND}
     "-DSPACELEDGER_EXE=$<TARGET_FILE:spaceledger>" -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_workflow.cmake")
+  add_test(NAME spaceledger_scheduled_runner COMMAND ${CMAKE_COMMAND}
+    "-DSPACELEDGER_EXE=$<TARGET_FILE:spaceledger>"
+    "-DSCHEDULED_RUNNER=${CMAKE_CURRENT_SOURCE_DIR}/tools/run-scheduled.ps1"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scheduled_runner.cmake")
 endif()

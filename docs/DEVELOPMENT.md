@@ -37,16 +37,21 @@ The same results were retrieved through the CLI from the saved SQLite snapshots.
 
 `scans` records root, volume GUID, UTC scan interval, total volume size and free space sampled before/after traversal. `entries` records relative paths, identity, directory flag, logical/allocated sizes, attributes, link count, last-write time, observation status and Win32 error code.
 
-`PRAGMA application_id` identifies SpaceLedger and `user_version` identifies the schema. Nonempty unrelated databases and unsupported schema versions are rejected. Read commands use `SQLITE_OPEN_READONLY`. History retains full snapshots until a later retention feature is designed.
+`PRAGMA application_id` identifies SpaceLedger and `user_version` identifies the schema. Nonempty unrelated databases and unsupported schema versions are rejected. Read commands use `SQLITE_OPEN_READONLY`. Version 0.2 retains the schema version 1 format and can explicitly prune old full snapshots per selected root.
+
+## Second session — 2026-10-02
+
+Version 0.2 adds bounded console progress reporting, Ctrl+C cancellation before commit, latest/time-window history selection, preview-first retention and a Windows Task Scheduler helper. A scheduled run invokes the built CLI and prunes only after a snapshot has been saved. Task registration remains an explicit user action; no monitored root or daily time has been chosen for this installation. The retention rule protects the newest configured number of snapshots and the latest scan without recorded coverage issues. `compact` reclaims SQLite pages only when explicitly requested.
+
+All four CTest targets passed in Release on this machine. The tests now include cancellation, long paths, time-window selection, retention behavior and command-line workflows. The scheduling helper is previewable without creating a task. The Windows PowerShell scheduled runner is separately exercised by the test suite. A metadata-only scan of the project's build folder observed 242 paths in 83 ms, with four expected skipped symbolic-link loops; this is not a whole-drive benchmark. Whole-drive and live-cloud behavior remain unverified.
 
 ## Next useful work
 
 1. Benchmark selected large directory trees, then reduce memory and metadata-call overhead using measured evidence.
-2. Strengthen tests for long paths, junctions, interrupted scans, cloud placeholders and changing directory topology. Test volume-level accounting on a disposable NTFS VHDX.
+2. Strengthen tests for junctions, cloud placeholders and changing directory topology. Test volume-level accounting on a disposable NTFS VHDX.
 3. Define stream-level accounting and an explicit reconciliation model for volume metadata and other unexplained allocation.
-4. Add scheduled snapshots and a retention policy before continuous monitoring.
-5. Add a simple timeline and folder-delta interface over the existing core.
-6. Add USN processing, gap detection and reconciliation. Evaluate optional ETW attribution separately.
+4. Add a simple timeline and folder-delta interface over the existing core.
+5. Add USN processing, gap detection and reconciliation. Evaluate optional ETW attribution separately.
 
 ## API references
 

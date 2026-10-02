@@ -80,7 +80,13 @@ Bytes free_space(const fs::path& root, Bytes& total) {
 }
 }
 
-Snapshot scan(const fs::path& input, const std::vector<fs::path>& exclusions) {
+Snapshot scan(const fs::path& input, const std::vector<fs::path>& exclusions,
+              const std::function<void(const ScanProgress&)>& on_progress,
+              const std::function<bool()>& cancelled) {
+    const auto stop_if_requested = [&] {
+        if (cancelled && cancelled()) throw ScanCancelled();
+    };
+    stop_if_requested();
     auto root = absolute_path(input);
     if (root.native().starts_with(L"\\\\")) throw std::runtime_error("This prototype supports local drive paths only");
     const auto attributes = GetFileAttributesW(extended(root).c_str());
@@ -116,8 +122,14 @@ Snapshot scan(const fs::path& input, const std::vector<fs::path>& exclusions) {
     result.entries.push_back(std::move(first));
     std::vector<std::pair<fs::path, std::size_t>> pending{{root, 0}};
     std::unordered_set<std::string> visited{result.entries.front().identity};
+    ScanProgress progress;
+    progress.entries = 1;
+    progress.directories = 1;
+    ULONGLONG last_report = GetTickCount64();
+    if (on_progress) on_progress(progress);
 
     while (!pending.empty()) {
+        stop_if_requested();
         auto [directory, index] = std::move(pending.back());
         pending.pop_back();
         const auto relative = result.entries[index].path;
@@ -130,6 +142,7 @@ Snapshot scan(const fs::path& input, const std::vector<fs::path>& exclusions) {
             continue;
         }
         do {
+            stop_if_requested();
             const std::wstring name(data.cFileName);
             if (name == L"." || name == L"..") continue;
             const auto path = directory / name;
@@ -146,7 +159,16 @@ Snapshot scan(const fs::path& input, const std::vector<fs::path>& exclusions) {
                 if (visited.insert(entry.identity).second) pending.emplace_back(path, result.entries.size());
                 else entry.status = "skipped_duplicate_directory";
             }
+            ++progress.entries;
+            if (entry.directory) ++progress.directories;
+            if (entry.status != "observed" && entry.status != "excluded") ++progress.issues;
+            progress.current_path = rel;
             result.entries.push_back(std::move(entry));
+            const auto now = GetTickCount64();
+            if (on_progress && now - last_report >= 500) {
+                on_progress(progress);
+                last_report = now;
+            }
         } while (FindNextFileW(find.value, &data));
         const auto error = GetLastError();
         if (error != ERROR_NO_MORE_FILES) failed(result.entries[index], error);
@@ -154,6 +176,7 @@ Snapshot scan(const fs::path& input, const std::vector<fs::path>& exclusions) {
     result.free_after = free_space(root, result.volume_total);
     result.finished = utc_now();
     std::sort(result.entries.begin(), result.entries.end(), [](const auto& a, const auto& b) { return a.path < b.path; });
+    if (on_progress) on_progress(progress);
     return result;
 }
 }
