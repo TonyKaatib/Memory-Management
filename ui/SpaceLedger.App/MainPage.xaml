@@ -99,8 +99,11 @@
                         <TextBlock x:Name="ResultHeadline" Text="Two scans are needed to show changes."
                                    FontSize="21" FontWeight="SemiBold" TextWrapping="Wrap" />
                         <TextBlock x:Name="ResultDetail" Text="No comparison loaded." Opacity="0.72" TextWrapping="Wrap" />
+                        <TextBlock x:Name="SizeExplanation" Visibility="Collapsed" Opacity="0.72" TextWrapping="Wrap"
+                                   Text="Allocated is disk space attributed to files in this folder; logical is their file length. Whole-drive free space includes activity elsewhere and cannot be explained by this folder alone." />
                         <InfoBar x:Name="CoverageBar" Severity="Warning" IsOpen="False" />
                         <TextBlock Text="Folder changes" FontWeight="SemiBold" Margin="0,8,0,0" />
+                        <TextBlock x:Name="FolderChangeSummary" FontSize="12" Opacity="0.72" TextWrapping="Wrap" />
                         <ListView x:Name="FolderChangesList" SelectionMode="None" MinHeight="110" MaxHeight="270">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
@@ -116,6 +119,23 @@
                             </ListView.ItemTemplate>
                         </ListView>
                         <TextBlock Text="File changes" FontWeight="SemiBold" Margin="0,8,0,0" />
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="190" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="FileFilterBox" PlaceholderText="Filter by path or change type"
+                                     AutomationProperties.Name="Filter file changes" TextChanged="FileFilter_TextChanged" />
+                            <ComboBox x:Name="FileSortBox" Grid.Column="1" HorizontalAlignment="Stretch"
+                                      AutomationProperties.Name="Sort file changes" SelectedIndex="0"
+                                      SelectionChanged="FileSort_SelectionChanged">
+                                <ComboBoxItem Content="Largest change first" />
+                                <ComboBoxItem Content="Growth first" />
+                                <ComboBoxItem Content="Space freed first" />
+                                <ComboBoxItem Content="Path A–Z" />
+                            </ComboBox>
+                        </Grid>
+                        <TextBlock x:Name="FileChangeSummary" FontSize="12" Opacity="0.72" TextWrapping="Wrap" />
                         <ListView x:Name="FileChangesList" SelectionMode="None" MinHeight="110" MaxHeight="270">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
@@ -130,7 +150,7 @@
                                 </DataTemplate>
                             </ListView.ItemTemplate>
                         </ListView>
-                        <TextBlock Text="Folder rows include descendants and overlap. Changes in free drive space may have other causes."
+                        <TextBlock Text="Folder rows include descendants and overlap; don't add their values together. Added or removed files may have moved into or out of this folder."
                                    FontSize="12" Opacity="0.65" TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
