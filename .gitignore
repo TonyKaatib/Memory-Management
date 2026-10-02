@@ -1,0 +1,7 @@
+/build*/
+/.vs/
+/.spaceledger/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
