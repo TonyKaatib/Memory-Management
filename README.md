@@ -1,5 +1,7 @@
 # SpaceLedger
 
+Or, why I do not regret Codex at all. The following was procedurely generated lol:
+
 A Windows storage-history prototype for answering **which files and folders changed their storage use between two scans**.
 
 Version 0.3 adds a WinUI 3 desktop window over the existing C++/SQLite scanner. You choose a folder, take scans manually, and compare them visually. It measures metadata, never reads file contents, has no file-cleanup commands, and does not start monitoring when opened.
