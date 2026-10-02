@@ -14,13 +14,13 @@
 using namespace spaceledger;
 
 namespace {
-constexpr const char* help = R"HELP(SpaceLedger 0.2 - storage change history for Windows NTFS
+constexpr const char* help = R"HELP(SpaceLedger 0.3 - storage change history for Windows NTFS
 
-  spaceledger scan <directory> [--quiet] [--database <history.db>]
-  spaceledger scans [--database <history.db>]
+  spaceledger scan <directory> [--quiet|--json-stream] [--cancel-event <name>] [--database <history.db>]
+  spaceledger scans [--json] [--database <history.db>]
   spaceledger latest [--path <directory>] [--database <history.db>]
-  spaceledger diff --from <id> --to <id> [--limit <rows>] [--database <history.db>]
-  spaceledger diff --since <24h|7d|2w> [--path <directory>] [--limit <rows>] [--database <history.db>]
+  spaceledger diff --from <id> --to <id> [--limit <rows>] [--json] [--database <history.db>]
+  spaceledger diff --since <24h|7d|2w> [--path <directory>] [--limit <rows>] [--json] [--database <history.db>]
   spaceledger issues --scan <id> [--database <history.db>]
   spaceledger retention --path <directory> --keep <count> [--apply] [--database <history.db>]
   spaceledger compact [--database <history.db>]
@@ -32,6 +32,7 @@ Scan reads metadata and saves one complete snapshot. Ctrl+C cancels without savi
 Retention previews deletion; --apply removes the listed snapshots.
 compact reclaims unused database pages and may need temporary free space.
 Reparse/cloud entries are skipped and reported. No elevation is required.
+--json provides machine-readable scans and diff reports; --json-stream emits scan progress.
 Exit codes: 0 success/help, 1 error, 2 scan stored with coverage issues, 130 cancelled.
 )HELP";
 
@@ -49,6 +50,20 @@ std::string size_text(Bytes bytes, bool signed_value = false) {
     if (signed_value && bytes > 0) result << '+';
     result << bytes << " B";
     return result.str();
+}
+
+std::string json_text(const std::string& value) {
+    constexpr char digits[] = "0123456789abcdef";
+    std::string result = "\"";
+    for (const unsigned char ch : value) {
+        if (ch == '"' || ch == '\\') { result += '\\'; result += static_cast<char>(ch); }
+        else if (ch < 0x20) {
+            result += "\\u00";
+            result += digits[ch >> 4];
+            result += digits[ch & 0xf];
+        } else result += static_cast<char>(ch);
+    }
+    return result + '"';
 }
 
 std::int64_t positive(const std::wstring& value, const char* name) {
@@ -89,8 +104,11 @@ int wmain(int argc, wchar_t** argv) {
             const bool allowed = arg == L"--database" || (command == L"diff" && (arg == L"--from" || arg == L"--to" || arg == L"--since" || arg == L"--limit")) ||
                                  (command == L"issues" && arg == L"--scan") ||
                                  ((command == L"diff" || command == L"latest" || command == L"retention") && arg == L"--path") ||
-                                 (command == L"retention" && arg == L"--keep");
-            const bool flag = (command == L"scan" && arg == L"--quiet") || (command == L"retention" && arg == L"--apply");
+                                 (command == L"retention" && arg == L"--keep") ||
+                                 (command == L"scan" && arg == L"--cancel-event");
+            const bool flag = (command == L"scan" && (arg == L"--quiet" || arg == L"--json-stream")) ||
+                              (command == L"retention" && arg == L"--apply") ||
+                              ((command == L"scans" || command == L"diff") && arg == L"--json");
             if (allowed) {
                 if (i + 1 >= argc || options.contains(arg)) throw std::runtime_error("Missing or repeated option: " + utf8(arg));
                 options[arg] = argv[++i];
@@ -108,28 +126,43 @@ int wmain(int argc, wchar_t** argv) {
 
         if (command == L"scan") {
             if (root.empty()) throw std::runtime_error("scan requires a directory");
+            if (flags.contains(L"--quiet") && flags.contains(L"--json-stream"))
+                throw std::runtime_error("Use either --quiet or --json-stream");
+            const bool json_stream = flags.contains(L"--json-stream");
+            Handle cancel_event(options.contains(L"--cancel-event") ?
+                OpenEventW(SYNCHRONIZE, FALSE, options.at(L"--cancel-event").c_str()) : INVALID_HANDLE_VALUE);
+            if (options.contains(L"--cancel-event") && !cancel_event)
+                throw std::runtime_error("Cannot open cancellation event: " + windows_error(GetLastError()));
+            const auto cancelled = [&] {
+                return cancellation_requested.load() || (cancel_event && WaitForSingleObject(cancel_event.get(), 0) == WAIT_OBJECT_0);
+            };
             // Validate the root before creating database directories.
             root = absolute_path(root);
             const DWORD attr = GetFileAttributesW(extended(root).c_str());
             if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY)) throw std::runtime_error("Scan root is not an accessible directory");
             const std::vector<fs::path> exclusions{database_path, database_path.native() + L"-journal",
                                                   database_path.native() + L"-wal", database_path.native() + L"-shm"};
-            std::cout << "Scanning " << utf8(root.native()) << " ...\n" << std::flush;
+            if (!json_stream) std::cout << "Scanning " << utf8(root.native()) << " ...\n" << std::flush;
             cancellation_requested.store(false);
             if (!SetConsoleCtrlHandler(console_control, TRUE)) throw std::runtime_error("Cannot install Ctrl+C handler");
             DWORD console_mode = 0;
-            const bool show_progress = !flags.contains(L"--quiet") &&
+            const bool show_progress = !flags.contains(L"--quiet") && !json_stream &&
                 GetConsoleMode(GetStdHandle(STD_ERROR_HANDLE), &console_mode);
             bool line_started = false;
             Snapshot snapshot;
             try {
                 snapshot = scan(root, exclusions, [&](const ScanProgress& progress) {
+                    if (json_stream) {
+                        std::cout << "{\"type\":\"progress\",\"entries\":" << progress.entries
+                                  << ",\"directories\":" << progress.directories
+                                  << ",\"issues\":" << progress.issues << "}\n" << std::flush;
+                    }
                     if (show_progress) {
                         std::cerr << "\rScanned " << progress.entries << " entries, " << progress.directories
                                   << " directories, " << progress.issues << " issues       " << std::flush;
                         line_started = true;
                     }
-                }, [] { return cancellation_requested.load(); });
+                }, cancelled);
             } catch (...) {
                 if (line_started) std::cerr << '\n';
                 SetConsoleCtrlHandler(console_control, FALSE);
@@ -137,9 +170,17 @@ int wmain(int argc, wchar_t** argv) {
             }
             if (line_started) std::cerr << '\n';
             SetConsoleCtrlHandler(console_control, FALSE);
+            if (cancelled()) throw ScanCancelled();
             fs::create_directories(database_path.parent_path());
             Database database(database_path, true);
             snapshot.id = database.save(snapshot);
+            if (json_stream) {
+                std::cout << "{\"type\":\"saved\",\"id\":" << snapshot.id
+                          << ",\"started\":" << json_text(snapshot.started)
+                          << ",\"finished\":" << json_text(snapshot.finished)
+                          << ",\"issues\":" << totals(snapshot).issues << "}\n";
+                return totals(snapshot).issues ? 2 : 0;
+            }
             std::cout << "Saved snapshot " << snapshot.id << " (" << snapshot.started << " to " << snapshot.finished << ")\n";
             print_totals(snapshot);
             std::cout << "Database: " << utf8(database_path.native()) << '\n';
@@ -159,6 +200,20 @@ int wmain(int argc, wchar_t** argv) {
         auto database = std::make_unique<Database>(database_path);
         if (command == L"scans") {
             const auto snapshots = database->list();
+            if (flags.contains(L"--json")) {
+                std::cout << "{\"snapshots\":[";
+                bool first = true;
+                for (const auto& s : snapshots) {
+                    if (!first) std::cout << ',';
+                    first = false;
+                    std::cout << "{\"id\":" << s.id << ",\"started\":" << json_text(s.started)
+                              << ",\"finished\":" << json_text(s.finished) << ",\"root\":" << json_text(s.root)
+                              << ",\"volume\":" << json_text(s.volume)
+                              << ",\"coverageIssues\":" << (database->has_coverage_issues(s.id) ? "true" : "false") << '}';
+                }
+                std::cout << "]}\n";
+                return 0;
+            }
             if (snapshots.empty()) std::cout << "No snapshots stored.\n";
             for (const auto& s : snapshots)
                 std::cout << s.id << "  " << s.started << "  " << s.root << '\n';
@@ -216,7 +271,7 @@ int wmain(int argc, wchar_t** argv) {
             const auto cutoff = utc_hours_ago(parse_duration_hours(options.at(L"--since")));
             const auto pair = since_pair(database->list(), selected_root(), cutoff);
             from = pair.from; to = pair.to;
-            std::cout << "Requested interval begins " << cutoff << '\n';
+            if (!flags.contains(L"--json")) std::cout << "Requested interval begins " << cutoff << '\n';
         } else {
             if (options.contains(L"--path")) throw std::runtime_error("--path is used with --since");
             from = positive(required(L"--from"), "--from");
@@ -226,6 +281,34 @@ int wmain(int argc, wchar_t** argv) {
         const auto limit = options.contains(L"--limit") ? positive(options.at(L"--limit"), "--limit") : 25;
         const auto before = database->load(from), after = database->load(to);
         const auto diff = compare(before, after);
+        if (flags.contains(L"--json")) {
+            std::cout << "{\"from\":" << from << ",\"to\":" << to << ",\"root\":" << json_text(after.root)
+                      << ",\"logicalDelta\":" << diff.logical_delta << ",\"allocatedDelta\":" << diff.allocated_delta
+                      << ",\"freeSpaceChange\":" << after.free_after - before.free_after
+                      << ",\"coverageIssuesBefore\":" << totals(before).issues
+                      << ",\"coverageIssuesAfter\":" << totals(after).issues
+                      << ",\"uncertain\":" << diff.uncertain << ",\"folders\":[";
+            bool first_row = true;
+            for (const auto& folder : diff.folders) {
+                if (!first_row) std::cout << ',';
+                first_row = false;
+                std::cout << "{\"path\":" << json_text(folder.path) << ",\"logicalDelta\":" << folder.logical
+                          << ",\"allocatedDelta\":" << folder.allocated << '}';
+            }
+            std::cout << "],\"files\":[";
+            first_row = true;
+            for (const auto& change : diff.changes) {
+                if (!first_row) std::cout << ',';
+                first_row = false;
+                std::cout << "{\"kind\":" << json_text(change.kind) << ",\"oldPath\":" << json_text(change.old_path)
+                          << ",\"newPath\":" << json_text(change.new_path)
+                          << ",\"logicalDelta\":" << change.logical_delta
+                          << ",\"allocatedDelta\":" << change.allocated_delta
+                          << ",\"known\":" << (change.known ? "true" : "false") << '}';
+            }
+            std::cout << "]}\n";
+            return 0;
+        }
         std::cout << "Snapshots " << from << " -> " << to << "  " << after.root << '\n'
                   << "Scan intervals: " << before.started << ".." << before.finished << " -> " << after.started << ".." << after.finished << '\n'
                   << "Comparable logical delta:   " << size_text(diff.logical_delta, true) << '\n'

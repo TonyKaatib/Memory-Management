@@ -1,4 +1,7 @@
 /build*/
+**/bin/
+**/obj/
+*.user
 /.vs/
 /.spaceledger/
 *.db

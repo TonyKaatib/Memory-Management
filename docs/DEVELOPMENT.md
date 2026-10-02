@@ -45,12 +45,18 @@ Version 0.2 adds bounded console progress reporting, Ctrl+C cancellation before 
 
 All four CTest targets passed in Release on this machine. The tests now include cancellation, long paths, time-window selection, retention behavior and command-line workflows. The scheduling helper is previewable without creating a task. The Windows PowerShell scheduled runner is separately exercised by the test suite. A metadata-only scan of the project's build folder observed 242 paths in 83 ms, with four expected skipped symbolic-link loops; this is not a whole-drive benchmark. Whole-drive and live-cloud behavior remain unverified.
 
+## Third session — 2026-10-02
+
+Version 0.3 adds an unpackaged WinUI 3 desktop front end. The existing C++ CLI remains the scanner and comparison engine; its new JSON reports and newline-delimited scan progress are the UI's interface. A named Windows event requests cancellation without killing the process. The window chooses a folder, takes scans only on request, lists prior snapshots, and shows folder/file deltas with coverage warnings. It stores GUI history in the user's local app-data directory and excludes that database during scans. No scheduled task or monitored root was registered.
+
+The first GUI is deliberately read-only with respect to file cleanup and retention. It was launched and visually inspected; opening it did not start a scan. Five CTest targets passed in Release, including JSON output and event-based cancellation. The WinUI Release build completed with zero warnings and errors. No real AppData scan or end-to-end GUI scan was performed. Before larger-directory use, benchmark traversal and database size, then test cancellation and on-disk history under load. Packaging and deployment to another PC remain future work.
+
 ## Next useful work
 
 1. Benchmark selected large directory trees, then reduce memory and metadata-call overhead using measured evidence.
-2. Strengthen tests for junctions, cloud placeholders and changing directory topology. Test volume-level accounting on a disposable NTFS VHDX.
-3. Define stream-level accounting and an explicit reconciliation model for volume metadata and other unexplained allocation.
-4. Add a simple timeline and folder-delta interface over the existing core.
+2. Test the GUI scan/compare workflow against a disposable local fixture, then improve responsive layout and add a real timeline chart.
+3. Correct retention's coverage check for inconsistent hard-link measurements; strengthen tests for junctions, cloud placeholders and changing directory topology.
+4. Define stream-level accounting and an explicit reconciliation model for volume metadata and other unexplained allocation. Test on a disposable NTFS VHDX.
 5. Add USN processing, gap detection and reconciliation. Evaluate optional ETW attribution separately.
 
 ## API references

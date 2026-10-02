@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(SpaceLedger VERSION 0.2.0 LANGUAGES CXX)
+project(SpaceLedger VERSION 0.3.0 LANGUAGES CXX)
 
 if(NOT WIN32 OR NOT MSVC)
   message(FATAL_ERROR "SpaceLedger currently requires Windows and the MSVC toolchain.")
@@ -38,4 +38,10 @@ if(BUILD_TESTING)
     "-DSPACELEDGER_EXE=$<TARGET_FILE:spaceledger>"
     "-DSCHEDULED_RUNNER=${CMAKE_CURRENT_SOURCE_DIR}/tools/run-scheduled.ps1"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/scheduled_runner.cmake")
+  add_test(NAME spaceledger_cli_cancel_event COMMAND
+    "$ENV{SystemRoot}/System32/WindowsPowerShell/v1.0/powershell.exe"
+    -NoProfile -NonInteractive -ExecutionPolicy Bypass
+    -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/cancel_event.ps1"
+    -Executable "$<TARGET_FILE:spaceledger>"
+    -FixtureRoot "${CMAKE_CURRENT_BINARY_DIR}")
 endif()

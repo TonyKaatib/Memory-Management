@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "SpaceLedger.App (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "SpaceLedger.App (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

@@ -1,12 +1,24 @@
 # SpaceLedger
 
-A Windows command-line prototype for answering **which files and folders changed their storage use between two scans**.
+A Windows storage-history prototype for answering **which files and folders changed their storage use between two scans**.
 
-Version 0.2 adds scan progress and cancellation, time-based comparisons, daily scheduling support, and controlled history retention to the NTFS snapshot prototype. It measures metadata, never reads file contents, and has no file-cleanup commands.
+Version 0.3 adds a WinUI 3 desktop window over the existing C++/SQLite scanner. You choose a folder, take scans manually, and compare them visually. It measures metadata, never reads file contents, has no file-cleanup commands, and does not start monitoring when opened.
+
+## Open the Windows app
+
+In PowerShell 7, build the scanner and the window together:
+
+```powershell
+.\tools\build-ui.ps1
+```
+
+Then open `ui\SpaceLedger.App\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\SpaceLedger.App.exe`. Choose a **local NTFS** folder and click **Scan now**. The first scan establishes a baseline; after a later scan, the window shows the largest folder and file changes, along with any coverage warnings. **Cancel scan** stops collection before saving a snapshot. Nothing scans automatically.
+
+The UI uses `%LOCALAPPDATA%\SpaceLedger\history.db` by default, separate from the CLI's `.spaceledger\history.db`. Expand **History file (advanced)** to open another SpaceLedger database; use **Load history** after changing it. To inspect GUI history from the CLI, pass `--database` with the UI database path. The UI build currently requires the .NET 10 SDK, Visual Studio C++ tools, and access to Microsoft's NuGet packages on first restore. The output is a development build, not an installer. Its Windows App SDK components are copied beside the app; a target PC also needs the .NET 10 desktop runtime.
 
 ## Build
 
-Requirements: Windows 10/11, Visual Studio 2022 or 2026 with **Desktop development with C++**, a Windows 10/11 SDK, and the Visual Studio CMake tools component. The build uses C++20 and the Windows-provided `winsqlite3` library; it downloads no dependencies.
+CLI requirements: Windows 10/11, Visual Studio 2022 or 2026 with **Desktop development with C++**, a Windows 10/11 SDK, and the Visual Studio CMake tools component. The C++ build uses the Windows-provided `winsqlite3` library; it downloads no dependencies.
 
 From PowerShell 7 in this directory:
 
@@ -46,6 +58,7 @@ By default, snapshots go into `.spaceledger\history.db` in the current directory
 ```powershell
 .\build\Release\spaceledger.exe issues --scan 2
 .\build\Release\spaceledger.exe diff --from 1 --to 2 --limit 100
+.\build\Release\spaceledger.exe diff --from 1 --to 2 --json
 .\build\Release\spaceledger.exe latest --path 'C:\path\to\your\folder'
 .\build\Release\spaceledger.exe diff --since 24h --path 'C:\path\to\your\folder'
 .\build\Release\spaceledger.exe --help
@@ -89,7 +102,7 @@ All sizes are exact **bytes**, all timestamps are **UTC**, and positive file/fol
 
 ## Current boundaries
 
-This remains a snapshot prototype. It does not yet implement a GUI, continuous USN journal monitoring, process attribution, application classification, or cleanup guidance. Scheduling uses Windows Task Scheduler rather than a permanently running service.
+This remains a snapshot prototype. The GUI is a first working window, not yet a full interactive timeline chart. It does not implement continuous USN journal monitoring, process attribution, application classification, or cleanup guidance. Optional scheduling uses Windows Task Scheduler rather than a permanently running service; no task is registered by the GUI.
 
 It supports local NTFS drive-letter paths. It skips reparse points, junctions and entries marked as cloud/offline/recall files, reporting those coverage gaps. It requests metadata access only and never reads file contents. Cloud-provider behavior has not yet been validated on a live OneDrive account. Do not use it as a security boundary against concurrent malicious path substitutions.
 
@@ -99,7 +112,7 @@ The scanner keeps a snapshot in memory and opens files individually. It is inten
 
 ## Verification
 
-CTest runs synthetic accounting cases and real NTFS fixtures under `build\spaceledger-test-*`. Tests cover growth, shrinkage, additions/removals, moves, hard links, sparse and compressed files, Unicode and long paths, content locks, denied directory listing, exclusions, persistence, read-only database access, transaction rollback and cancellation. A symbolic-link loop is tested where the OS permits creating it; otherwise that case explicitly reports `SKIP`. A separate CLI workflow checks the commands and invalid inputs, including time selection and retention. Fixtures are retained for inspection. All fixture content and ACL changes are confined to newly created test directories.
+CTest runs synthetic accounting cases and real NTFS fixtures under `build\spaceledger-test-*`. Tests cover growth, shrinkage, additions/removals, moves, hard links, sparse and compressed files, Unicode and long paths, content locks, denied directory listing, exclusions, persistence, read-only database access, transaction rollback and cancellation. A symbolic-link loop is tested where the OS permits creating it; otherwise that case explicitly reports `SKIP`. CLI workflows check the commands and invalid inputs, including time selection, JSON reports, retention and named-event cancellation. All five automated targets pass on this development PC. The GUI builds and opens; its scan/compare workflow has not yet been manually exercised end to end. Fixtures are retained for inspection. All fixture content and ACL changes are confined to newly created test directories.
 
 Source layout:
 
@@ -110,9 +123,11 @@ src/scanner.cpp       NTFS metadata collection
 src/database.cpp      SQLite schema and transactions
 src/diff.cpp          Identity matching and folder accounting
 src/history.cpp       Time selection and retention policy
-src/main.cpp          CLI and reports
+src/main.cpp          CLI, human-readable and JSON reports
+ui/SpaceLedger.App/  WinUI 3 desktop window and CLI bridge
 tests/tests.cpp       Accounting and filesystem integration tests
 tools/build.ps1       Build and test entry point
+tools/build-ui.ps1    Build CLI and desktop window
 tools/schedule.ps1    Task Scheduler preview and management
 tools/run-scheduled.ps1  Single scheduled scan and retention
 docs/DEVELOPMENT.md    Decisions, tested status and next milestones
